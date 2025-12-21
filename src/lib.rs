@@ -54,6 +54,7 @@ pub enum ImageProtocolType {
     Auto,
     Iterm,
     Kitty,
+    Text,
 }
 
 impl From<Option<ImageProtocolType>> for protocol::ImageProtocol {
@@ -62,6 +63,7 @@ impl From<Option<ImageProtocolType>> for protocol::ImageProtocol {
             Some(ImageProtocolType::Auto) => protocol::auto_detect(),
             Some(ImageProtocolType::Iterm) => protocol::ImageProtocol::Iterm2,
             Some(ImageProtocolType::Kitty) => protocol::ImageProtocol::Kitty,
+            Some(ImageProtocolType::Text) => protocol::ImageProtocol::Text,
             None => protocol::auto_detect(),
         }
     }

@@ -91,9 +91,14 @@ impl<'a> App<'a> {
                 CommitInfo::new(commit.clone(), refs, graph_color)
             })
             .collect();
-        let graph_cell_width = match cell_width_type {
-            CellWidthType::Double => (graph.max_pos_x + 1) as u16 * 2,
-            CellWidthType::Single => (graph.max_pos_x + 1) as u16,
+        let graph_cell_width = if image_protocol.is_text_mode() {
+            // Text mode: each column is 2 chars (symbol + space/connector)
+            (graph.max_pos_x + 1) as u16 * 2
+        } else {
+            match cell_width_type {
+                CellWidthType::Double => (graph.max_pos_x + 1) as u16 * 2,
+                CellWidthType::Single => (graph.max_pos_x + 1) as u16,
+            }
         };
         let head = repository.head();
         let mut commit_list_state = CommitListState::new(
@@ -942,9 +947,14 @@ impl App<'_> {
             })
             .collect();
 
-        let graph_cell_width = match self.cell_width_type {
-            CellWidthType::Double => (graph.max_pos_x + 1) as u16 * 2,
-            CellWidthType::Single => (graph.max_pos_x + 1) as u16,
+        let graph_cell_width = if self.image_protocol.is_text_mode() {
+            // Text mode: each column is 2 chars (symbol + space/connector)
+            (graph.max_pos_x + 1) as u16 * 2
+        } else {
+            match self.cell_width_type {
+                CellWidthType::Double => (graph.max_pos_x + 1) as u16 * 2,
+                CellWidthType::Single => (graph.max_pos_x + 1) as u16,
+            }
         };
 
         let head = repository.head();

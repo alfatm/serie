@@ -3,7 +3,7 @@ use std::env;
 use base64::Engine;
 
 // By default assume the Iterm2 is the best protocol to use for all terminals *unless* an env
-// variable is set that suggests the terminal is probably Kitty.
+// variable is set that suggests the terminal is probably Kitty or Windows Terminal.
 pub fn auto_detect() -> ImageProtocol {
     // https://sw.kovidgoyal.net/kitty/glossary/#envvar-KITTY_WINDOW_ID
     if env::var("KITTY_WINDOW_ID").is_ok() {
@@ -13,6 +13,10 @@ pub fn auto_detect() -> ImageProtocol {
     if env::var("TERM").is_ok_and(|t| t == "xterm-ghostty") {
         return ImageProtocol::Kitty;
     }
+    // Windows Terminal doesn't support image protocols well, use text mode
+    if env::var("WT_SESSION").is_ok() {
+        return ImageProtocol::Text;
+    }
     ImageProtocol::Iterm2
 }
 
@@ -20,6 +24,7 @@ pub fn auto_detect() -> ImageProtocol {
 pub enum ImageProtocol {
     Iterm2,
     Kitty,
+    Text,
 }
 
 impl ImageProtocol {
@@ -27,6 +32,7 @@ impl ImageProtocol {
         match self {
             ImageProtocol::Iterm2 => iterm2_encode(bytes, cell_width, 1),
             ImageProtocol::Kitty => kitty_encode(bytes, cell_width, 1),
+            ImageProtocol::Text => String::new(), // Text mode doesn't use encoded images
         }
     }
 
@@ -34,7 +40,12 @@ impl ImageProtocol {
         match self {
             ImageProtocol::Iterm2 => {}
             ImageProtocol::Kitty => kitty_clear_line(y),
+            ImageProtocol::Text => {}
         }
+    }
+
+    pub fn is_text_mode(&self) -> bool {
+        matches!(self, ImageProtocol::Text)
     }
 }
 

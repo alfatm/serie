@@ -23,6 +23,7 @@ pub struct GraphImageManager {
     image_params: ImageParams,
     drawing_pixels: DrawingPixels,
     image_protocol: ImageProtocol,
+    graph_colors: Vec<ratatui::style::Color>,
 }
 
 impl GraphImageManager {
@@ -35,6 +36,11 @@ impl GraphImageManager {
     ) -> Self {
         let image_params = ImageParams::new(graph_color_set, cell_width_type);
         let drawing_pixels = DrawingPixels::new(&image_params);
+        let graph_colors: Vec<ratatui::style::Color> = graph_color_set
+            .colors
+            .iter()
+            .map(|c| c.to_ratatui_color())
+            .collect();
 
         let mut m = GraphImageManager {
             encoded_image_map: FxHashMap::default(),
@@ -43,6 +49,7 @@ impl GraphImageManager {
             graph,
             cell_width_type,
             image_protocol,
+            graph_colors,
         };
         if preload {
             m.load_all_encoded_image();
@@ -52,6 +59,31 @@ impl GraphImageManager {
 
     pub fn encoded_image(&self, commit_hash: &CommitHash) -> &str {
         self.encoded_image_map.get(commit_hash).unwrap()
+    }
+
+    pub fn is_text_mode(&self) -> bool {
+        self.image_protocol.is_text_mode()
+    }
+
+    pub fn text_graph(&self, commit_hash: &CommitHash) -> Vec<(char, usize)> {
+        let (pos_x, pos_y) = self.graph.commit_pos_map[commit_hash];
+        let edges = &self.graph.edges[pos_y];
+        let cell_count = self.graph.max_pos_x + 1;
+
+        edges_to_text(pos_x, cell_count, edges)
+    }
+
+    pub fn graph_cell_count(&self) -> usize {
+        self.graph.max_pos_x + 1
+    }
+
+    pub fn text_graph_width(&self) -> usize {
+        // Each column takes 2 chars in text mode
+        (self.graph.max_pos_x + 1) * 2
+    }
+
+    pub fn graph_color(&self, color_idx: usize) -> ratatui::style::Color {
+        self.graph_colors[color_idx % self.graph_colors.len()]
     }
 
     pub fn load_all_encoded_image(&mut self) {
@@ -674,6 +706,55 @@ fn build_image(img_buf: &[u8], image_width: u32, image_height: u32) -> Vec<u8> {
     )
     .unwrap();
     bytes.into_inner()
+}
+
+/// Convert edges to text representation for text mode rendering.
+/// Returns Vec of (char, color_index) for each cell position.
+/// Each graph column uses 2 characters: symbol + connecting char (space or horizontal line).
+fn edges_to_text(commit_pos_x: usize, cell_count: usize, edges: &[Edge]) -> Vec<(char, usize)> {
+    // Each cell takes 2 chars: the main symbol and a connector
+    let mut cells: Vec<(char, usize)> = vec![(' ', 0); cell_count * 2];
+
+    // Place commit marker
+    cells[commit_pos_x * 2] = ('●', commit_pos_x);
+
+    // Process edges - git style with | and unicode corners
+    for edge in edges {
+        let (ch, connector) = match edge.edge_type {
+            EdgeType::Vertical => ('│', ' '),
+            EdgeType::Horizontal => ('─', '─'),
+            EdgeType::Up => ('│', ' '),
+            EdgeType::Down => ('│', ' '),
+            EdgeType::Left => ('─', '─'),
+            EdgeType::Right => ('─', '─'),
+            EdgeType::RightTop => ('╮', ' '),
+            EdgeType::RightBottom => ('╯', ' '),
+            EdgeType::LeftTop => ('╭', '─'),
+            EdgeType::LeftBottom => ('╰', '─'),
+        };
+
+        let idx = edge.pos_x * 2;
+
+        // Don't overwrite commit marker
+        if edge.pos_x != commit_pos_x {
+            cells[idx] = (ch, edge.associated_line_pos_x);
+        }
+
+        // Add connector (horizontal line or space) after the symbol
+        // Only if there's a horizontal continuation to the right
+        if matches!(
+            edge.edge_type,
+            EdgeType::Horizontal
+                | EdgeType::Left
+                | EdgeType::Right
+                | EdgeType::LeftTop
+                | EdgeType::LeftBottom
+        ) {
+            cells[idx + 1] = (connector, edge.associated_line_pos_x);
+        }
+    }
+
+    cells
 }
 
 #[cfg(test)]

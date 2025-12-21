@@ -886,6 +886,19 @@ impl CommitListState {
             .encoded_image(&commit_info.commit.commit_hash)
     }
 
+    fn is_text_mode(&self) -> bool {
+        self.graph_image_manager.is_text_mode()
+    }
+
+    fn text_graph(&self, commit_info: &CommitInfo) -> Vec<(char, usize)> {
+        self.graph_image_manager
+            .text_graph(&commit_info.commit.commit_hash)
+    }
+
+    fn graph_color(&self, color_idx: usize) -> Color {
+        self.graph_image_manager.graph_color(color_idx)
+    }
+
     // Filter mode methods
 
     pub fn filter_state(&self) -> FilterState {
@@ -1184,6 +1197,14 @@ impl CommitList<'_> {
     }
 
     fn render_graph(&self, buf: &mut Buffer, area: Rect, state: &CommitListState) {
+        if state.is_text_mode() {
+            self.render_graph_text(buf, area, state);
+        } else {
+            self.render_graph_image(buf, area, state);
+        }
+    }
+
+    fn render_graph_image(&self, buf: &mut Buffer, area: Rect, state: &CommitListState) {
         self.rendering_commit_info_iter(state)
             .for_each(|(display_i, _real_i, commit_info)| {
                 buf[(area.left(), area.top() + display_i as u16)]
@@ -1192,6 +1213,22 @@ impl CommitList<'_> {
                 // width - 1 for right pad
                 for w in 1..area.width - 1 {
                     buf[(area.left() + w, area.top() + display_i as u16)].set_skip(true);
+                }
+            });
+    }
+
+    fn render_graph_text(&self, buf: &mut Buffer, area: Rect, state: &CommitListState) {
+        self.rendering_commit_info_iter(state)
+            .for_each(|(display_i, _real_i, commit_info)| {
+                let text_graph = state.text_graph(commit_info);
+                let y = area.top() + display_i as u16;
+
+                for (x_offset, (ch, color_idx)) in text_graph.iter().enumerate() {
+                    let x = area.left() + x_offset as u16;
+                    if x < area.right() {
+                        let color = state.graph_color(*color_idx);
+                        buf[(x, y)].set_char(*ch).set_fg(color);
+                    }
                 }
             });
     }
