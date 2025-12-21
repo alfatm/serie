@@ -1119,7 +1119,36 @@ impl GenerateGraphOption<'_> {
 fn generate_and_output_graph_images(repo_path: &Path, options: &[GenerateGraphOption]) {
     for option in options {
         generate_and_output_graph_image(repo_path, option);
+        generate_and_output_text_graph(repo_path, option);
     }
+}
+
+fn generate_and_output_text_graph<P: AsRef<Path>>(path: P, option: &GenerateGraphOption) {
+    let repository = git::Repository::load(path.as_ref(), option.sort).unwrap();
+    let graph_data = graph::calc_graph(&repository);
+
+    let cell_count = graph_data.max_pos_x + 1;
+    let mut output = String::new();
+
+    for (i, commit) in graph_data.commits.iter().enumerate() {
+        let (pos_x, _pos_y) = graph_data.commit_pos_map[&commit.commit_hash];
+        let edges = &graph_data.edges[i];
+
+        let text_cells = graph::edges_to_text(pos_x, cell_count, edges);
+        let graph_str: String = text_cells.iter().map(|(ch, _)| *ch).collect();
+
+        let line = format!(
+            "{} {} {}\n",
+            graph_str,
+            commit.commit_hash.as_short_hash(),
+            commit.subject
+        );
+        output.push_str(&line);
+    }
+
+    create_output_dirs(OUTPUT_DIR);
+    let file_name = format!("{}/{}.txt", OUTPUT_DIR, option.output_name);
+    std::fs::write(file_name, output).unwrap();
 }
 
 fn generate_and_output_graph_image<P: AsRef<Path>>(path: P, option: &GenerateGraphOption) {

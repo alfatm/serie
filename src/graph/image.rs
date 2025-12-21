@@ -711,46 +711,158 @@ fn build_image(img_buf: &[u8], image_width: u32, image_height: u32) -> Vec<u8> {
 /// Convert edges to text representation for text mode rendering.
 /// Returns Vec of (char, color_index) for each cell position.
 /// Each graph column uses 2 characters: symbol + connecting char (space or horizontal line).
-fn edges_to_text(commit_pos_x: usize, cell_count: usize, edges: &[Edge]) -> Vec<(char, usize)> {
+///
+/// Character set (git-graph style "round"):
+/// - ● commit marker
+/// - │ vertical line
+/// - ─ horizontal line
+/// - ╭ left-top corner (branch going right-down)
+/// - ╮ right-top corner (branch going left-down)
+/// - ╰ left-bottom corner (merge from right-up)
+/// - ╯ right-bottom corner (merge from left-up)
+/// - ┼ cross (vertical + horizontal)
+/// - ├ vertical with right branch
+/// - ┤ vertical with left branch
+/// - ┬ horizontal with down branch
+/// - ┴ horizontal with up branch
+pub fn edges_to_text(commit_pos_x: usize, cell_count: usize, edges: &[Edge]) -> Vec<(char, usize)> {
     // Each cell takes 2 chars: the main symbol and a connector
     let mut cells: Vec<(char, usize)> = vec![(' ', 0); cell_count * 2];
 
     // Place commit marker
     cells[commit_pos_x * 2] = ('●', commit_pos_x);
 
-    // Process edges - git style with | and unicode corners
+    // Build a map of edge types per position for combining overlapping edges
+    let mut pos_edges: Vec<Vec<EdgeType>> = vec![vec![]; cell_count];
     for edge in edges {
-        let (ch, connector) = match edge.edge_type {
-            EdgeType::Vertical => ('│', ' '),
-            EdgeType::Horizontal => ('─', '─'),
-            EdgeType::Up => ('│', ' '),
-            EdgeType::Down => ('│', ' '),
-            EdgeType::Left => ('─', '─'),
-            EdgeType::Right => ('─', '─'),
-            EdgeType::RightTop => ('╮', ' '),
-            EdgeType::RightBottom => ('╯', ' '),
-            EdgeType::LeftTop => ('╭', '─'),
-            EdgeType::LeftBottom => ('╰', '─'),
-        };
+        pos_edges[edge.pos_x].push(edge.edge_type);
+    }
 
+    // Process edges - git style with unicode box drawing characters
+    for edge in edges {
         let idx = edge.pos_x * 2;
 
-        // Don't overwrite commit marker
-        if edge.pos_x != commit_pos_x {
-            cells[idx] = (ch, edge.associated_line_pos_x);
+        // For commit position, handle connectors and merge arrows
+        if edge.pos_x == commit_pos_x {
+            // Add connector for horizontal edges going right from commit
+            if matches!(edge.edge_type, EdgeType::Horizontal) && cells[idx + 1].0 == ' ' {
+                cells[idx + 1] = ('─', edge.associated_line_pos_x);
+            }
+            // Right edge at commit position:
+            // - If associated_line_pos_x > commit_pos_x: this is a branch starting here, going right
+            // - If associated_line_pos_x < commit_pos_x: this is a merge ending here, coming from right
+            if edge.edge_type == EdgeType::Right {
+                if edge.associated_line_pos_x > commit_pos_x {
+                    // Branch: just add connector
+                    if cells[idx + 1].0 == ' ' {
+                        cells[idx + 1] = ('─', edge.associated_line_pos_x);
+                    }
+                } else {
+                    // Merge from right: add arrow after commit
+                    if cells[idx + 1].0 == ' ' || cells[idx + 1].0 == '─' {
+                        cells[idx + 1] = ('>', edge.associated_line_pos_x);
+                    }
+                }
+            }
+            // Add arrow before commit for Left edge (merge coming from left side toward right)
+            if edge.edge_type == EdgeType::Left && idx > 0 && cells[idx - 1].0 == '─' {
+                cells[idx - 1] = ('<', edge.associated_line_pos_x);
+            }
+            continue;
         }
 
-        // Add connector (horizontal line or space) after the symbol
-        // Only if there's a horizontal continuation to the right
-        if matches!(
-            edge.edge_type,
-            EdgeType::Horizontal
-                | EdgeType::Left
-                | EdgeType::Right
-                | EdgeType::LeftTop
-                | EdgeType::LeftBottom
-        ) {
-            cells[idx + 1] = (connector, edge.associated_line_pos_x);
+        // Check what edge types exist at this position for merging
+        let edge_types = &pos_edges[edge.pos_x];
+
+        // Categorize edges at this position
+        let has_vertical = edge_types.contains(&EdgeType::Vertical)
+            || edge_types.contains(&EdgeType::Up)
+            || edge_types.contains(&EdgeType::Down);
+        // Note: Left/Right are merge arrows, not horizontal lines for combination purposes
+        let has_horizontal = edge_types.contains(&EdgeType::Horizontal);
+
+        // Corners - named by which direction they connect TO from this cell
+        // ╭ LeftTop: connects left (to commit) and down (to child below)
+        // ╮ RightTop: connects right (from horizontal) and down (to child below)
+        // ╰ LeftBottom: connects left (to commit) and up (to parent above)
+        // ╯ RightBottom: connects right (from horizontal) and up (to parent above)
+        let has_left_top = edge_types.contains(&EdgeType::LeftTop); // ╭
+        let has_right_top = edge_types.contains(&EdgeType::RightTop); // ╮
+        let has_left_bottom = edge_types.contains(&EdgeType::LeftBottom); // ╰
+        let has_right_bottom = edge_types.contains(&EdgeType::RightBottom); // ╯
+
+        // Corners going down (creating branches)
+        let has_down_corner = has_left_top || has_right_top;
+        // Corners going up (merging)
+        let has_up_corner = has_left_bottom || has_right_bottom;
+        // Corners connecting to the left (toward column 0)
+        let has_left_corner = has_left_top || has_left_bottom;
+        // Corners connecting to the right (away from column 0)
+        let has_right_corner = has_right_top || has_right_bottom;
+
+        // Check if this is a merge arrow (Left or Right edge = endpoint of merge line)
+        // Left edge: merge line ends here, arrow points left toward commit
+        // Right edge: merge line ends here, arrow points right toward commit
+        let is_merge_arrow = matches!(edge.edge_type, EdgeType::Left | EdgeType::Right);
+
+        // Determine character based on edge combinations (git-graph merging rules)
+        let ch = if is_merge_arrow {
+            // Merge arrows take priority
+            match edge.edge_type {
+                EdgeType::Left => '<',  // Arrow pointing left
+                EdgeType::Right => '>', // Arrow pointing right
+                _ => '─',
+            }
+        } else if has_vertical && has_horizontal {
+            '┼' // CROSS
+        } else if has_vertical && has_left_corner {
+            '├' // VER_R: vertical with branch going left (toward commits)
+        } else if has_vertical && has_right_corner {
+            '┤' // VER_L: vertical with branch coming from right
+        } else if has_horizontal && has_up_corner {
+            '┴' // HOR_U: horizontal with up branch
+        } else if has_horizontal && has_down_corner {
+            '┬' // HOR_D: horizontal with down branch
+        } else if has_up_corner && has_down_corner {
+            // Vertical continuation through corners
+            if has_left_corner && has_right_corner {
+                '┼' // Cross: corners from both sides
+            } else if has_left_corner {
+                '├' // Both corners go left
+            } else {
+                '┤' // Both corners come from right
+            }
+        } else if has_left_top && has_left_bottom {
+            '├' // ╭ + ╰ = vertical going left
+        } else if has_right_top && has_right_bottom {
+            '┤' // ╮ + ╯ = vertical coming from right
+        } else if (has_left_top && has_right_bottom) || (has_right_top && has_left_bottom) {
+            '┼' // ╭ + ╯ or ╮ + ╰ = cross
+        } else {
+            // Single edge type
+            match edge.edge_type {
+                EdgeType::Vertical | EdgeType::Up | EdgeType::Down => '│',
+                EdgeType::Horizontal => '─',
+                EdgeType::Left => '<',
+                EdgeType::Right => '>',
+                EdgeType::LeftTop => '╭',
+                EdgeType::RightTop => '╮',
+                EdgeType::RightBottom => '╯',
+                EdgeType::LeftBottom => '╰',
+            }
+        };
+
+        // Set the cell
+        cells[idx] = (ch, edge.associated_line_pos_x);
+
+        // Add connector (horizontal line) after the symbol if needed
+        // Connectors go right when: horizontal line, or left-going corners (╭, ╰)
+        let needs_right_connector = has_horizontal
+            || has_left_corner
+            || matches!(edge.edge_type, EdgeType::LeftTop | EdgeType::LeftBottom);
+
+        if needs_right_connector && cells[idx + 1].0 == ' ' {
+            cells[idx + 1] = ('─', edge.associated_line_pos_x);
         }
     }
 
