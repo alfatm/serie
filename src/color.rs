@@ -110,7 +110,17 @@ impl GraphColor {
     }
 
     pub fn to_ratatui_color(self) -> RatatuiColor {
-        RatatuiColor::Rgb(self.r, self.g, self.b)
+        // Map xterm-256 bright ANSI colors to indexed palette for consistent terminal rendering
+        // This ensures colors match git-graph regardless of terminal's RGB support
+        match (self.r, self.g, self.b) {
+            (0xFF, 0x55, 0x55) => RatatuiColor::Indexed(9), // Bright Red
+            (0x55, 0xFF, 0x55) => RatatuiColor::Indexed(10), // Bright Green
+            (0xFF, 0xFF, 0x55) => RatatuiColor::Indexed(11), // Bright Yellow
+            (0x55, 0x55, 0xFF) => RatatuiColor::Indexed(12), // Bright Blue
+            (0xFF, 0x55, 0xFF) => RatatuiColor::Indexed(13), // Bright Magenta
+            (0x55, 0xFF, 0xFF) => RatatuiColor::Indexed(14), // Bright Cyan
+            _ => RatatuiColor::Rgb(self.r, self.g, self.b),
+        }
     }
 
     fn transparent() -> Self {

@@ -286,13 +286,14 @@ pub struct GraphConfig {
 #[optional(derives = [Deserialize])]
 #[derive(Debug, Clone, PartialEq, Eq, SmartDefault)]
 pub struct GraphColorConfig {
+    // git-graph style: blue for main, then magenta, cyan, green, yellow, red
     #[default(vec![
-        "#E06C76".into(),
-        "#98C379".into(),
-        "#E5C07B".into(),
-        "#61AFEF".into(),
-        "#C678DD".into(),
-        "#56B6C2".into(),
+        "#5555FF".into(),  // Bright Blue (main branch)
+        "#FF55FF".into(),  // Bright Magenta
+        "#55FFFF".into(),  // Bright Cyan
+        "#55FF55".into(),  // Bright Green
+        "#FFFF55".into(),  // Bright Yellow
+        "#FF5555".into(),  // Bright Red
     ])]
     pub branches: Vec<String>,
     #[default = "#00000000"]
@@ -360,12 +361,12 @@ mod tests {
             graph: GraphConfig {
                 color: GraphColorConfig {
                     branches: vec![
-                        "#E06C76".into(),
-                        "#98C379".into(),
-                        "#E5C07B".into(),
-                        "#61AFEF".into(),
-                        "#C678DD".into(),
-                        "#56B6C2".into(),
+                        "#5555FF".into(),
+                        "#FF55FF".into(),
+                        "#55FFFF".into(),
+                        "#55FF55".into(),
+                        "#FFFF55".into(),
+                        "#FF5555".into(),
                     ],
                     edge: "#00000000".into(),
                     background: "#00000000".into(),
@@ -550,12 +551,12 @@ mod tests {
             graph: GraphConfig {
                 color: GraphColorConfig {
                     branches: vec![
-                        "#E06C76".into(),
-                        "#98C379".into(),
-                        "#E5C07B".into(),
-                        "#61AFEF".into(),
-                        "#C678DD".into(),
-                        "#56B6C2".into(),
+                        "#5555FF".into(),
+                        "#FF55FF".into(),
+                        "#55FFFF".into(),
+                        "#55FF55".into(),
+                        "#FFFF55".into(),
+                        "#FF5555".into(),
                     ],
                     edge: "#00000000".into(),
                     background: "#00000000".into(),
