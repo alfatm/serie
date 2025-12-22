@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::git::{Commit, CommitHash, Repository};
 
@@ -59,30 +59,52 @@ pub fn calc_graph(repository: &Repository) -> Graph {
     }
 }
 
-/// New algorithm for commit positioning that places the primary branch (master/main)
-/// in column 0, with feature branches to the right.
+/// Algorithm for commit positioning following git-graph rules:
 ///
-/// The algorithm:
-/// 1. Track active branch lines as we iterate through commits (top to bottom)
-/// 2. A new branch line starts when a commit has no children (first-parent relationship)
-/// 3. The primary line (following first parents) stays in column 0
-/// 4. Secondary branches get columns to the right
+/// 1. First-parent chain from HEAD is always column 0 (leftmost)
+/// 2. Second+ parents in merge commits create branches to the right
+/// 3. Each branch gets its own column, reused when the branch merges back
+///
+/// Key insight: git-graph follows first-parent from HEAD downward.
+/// When a merge commit is encountered, the first parent continues on the same column,
+/// and the second parent(s) are shown as branches coming from the right.
 fn calc_commit_positions(commits: &[Rc<Commit>], repository: &Repository) -> CommitPosMap {
     let mut commit_pos_map: CommitPosMap = FxHashMap::default();
 
+    if commits.is_empty() {
+        return commit_pos_map;
+    }
+
     // Track which column each active branch line occupies
-    // Each element is Some(commit_hash) where commit_hash is the "current" commit on that line
-    // or None if the column is free
+    // Column 0 is reserved for the first-parent chain from HEAD
     let mut active_columns: Vec<Option<CommitHash>> = Vec::new();
 
     // Map from commit hash to its assigned column
     let mut commit_to_column: FxHashMap<CommitHash, usize> = FxHashMap::default();
 
+    // Build the main line (first-parent chain from HEAD)
+    let mut main_line: FxHashSet<CommitHash> = FxHashSet::default();
+    let mut current = Some(commits[0].commit_hash.clone());
+    while let Some(hash) = current {
+        main_line.insert(hash.clone());
+        current = repository.parents_hash(&hash).first().map(|p| (*p).clone());
+    }
+
+    // Track which commits are second+ parents (merged-in branches)
+    // These should appear to the right
+    let mut is_merge_source: FxHashSet<CommitHash> = FxHashSet::default();
+    for commit in commits {
+        // Skip first parent, mark all other parents as merge sources
+        for parent_hash in commit.parent_commit_hashes.iter().skip(1) {
+            is_merge_source.insert(parent_hash.clone());
+        }
+    }
+
     for (pos_y, commit) in commits.iter().enumerate() {
         let hash = &commit.commit_hash;
 
-        // Find children that have this commit as their first parent
-        // These are the "continuing" lines from above
+        // Find children that have this commit as their FIRST parent
+        // These continue the same branch line
         let first_parent_children: Vec<&CommitHash> = repository
             .children_hash(hash)
             .into_iter()
@@ -93,15 +115,20 @@ fn calc_commit_positions(commits: &[Rc<Commit>], repository: &Repository) -> Com
             .collect();
 
         if first_parent_children.is_empty() {
-            // This commit starts a new branch line (no children have it as first parent)
-            // Find the first available column, preferring column 0 for the first branch
-            let pos_x = find_first_vacant_column(&active_columns);
+            // This commit starts a new branch line (no child has it as first parent)
+            let pos_x = if main_line.contains(hash) && !is_merge_source.contains(hash) {
+                // Main line always gets column 0
+                0
+            } else {
+                // Branch that will be merged - place to the right
+                find_first_vacant_column_after(&active_columns, 0)
+            };
             occupy_column(&mut active_columns, pos_x, hash.clone());
             commit_to_column.insert(hash.clone(), pos_x);
             commit_pos_map.insert(hash.clone(), (pos_x, pos_y));
         } else {
             // This commit continues from one or more child branches
-            // Find which columns those children occupy and pick the leftmost (smallest)
+            // Find which columns those children occupy and pick the leftmost
             let mut min_col = usize::MAX;
             let mut columns_to_free: Vec<usize> = Vec::new();
 
@@ -121,12 +148,15 @@ fn calc_commit_positions(commits: &[Rc<Commit>], repository: &Repository) -> Com
                 }
             }
 
-            // If we didn't find any column (shouldn't happen), get a new one
+            // If we didn't find any column, get a new one
             if min_col == usize::MAX {
-                min_col = find_first_vacant_column(&active_columns);
+                min_col = if main_line.contains(hash) && !is_merge_source.contains(hash) {
+                    0
+                } else {
+                    find_first_vacant_column(&active_columns)
+                };
             }
 
-            // Occupy the column with this commit
             occupy_column(&mut active_columns, min_col, hash.clone());
             commit_to_column.insert(hash.clone(), min_col);
             commit_pos_map.insert(hash.clone(), (min_col, pos_y));
@@ -141,6 +171,15 @@ fn find_first_vacant_column(columns: &[Option<CommitHash>]) -> usize {
         .iter()
         .position(|c| c.is_none())
         .unwrap_or(columns.len())
+}
+
+fn find_first_vacant_column_after(columns: &[Option<CommitHash>], after: usize) -> usize {
+    for (i, col) in columns.iter().enumerate().skip(after + 1) {
+        if col.is_none() {
+            return i;
+        }
+    }
+    columns.len().max(after + 1)
 }
 
 fn occupy_column(columns: &mut Vec<Option<CommitHash>>, col: usize, hash: CommitHash) {
